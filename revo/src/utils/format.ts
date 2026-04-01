@@ -1,5 +1,11 @@
 export function formatNumber(value: number): string {
-  if (value >= 1000) {
+  const abs = Math.abs(value);
+
+  if (abs < 10) {
+    return value.toFixed(2);
+  }
+
+  if (abs >= 1000) {
     return value.toFixed(1);
   }
 

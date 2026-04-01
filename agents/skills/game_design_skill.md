@@ -47,6 +47,42 @@ If values are needed, read them from config instead of inventing or hardcoding.
 - Prefer a small number of clear systems with meaningful tension.
 - Add new elements only if they create a new decision or bottleneck.
 
+## Finalized Gameplay Rules (Current Milestone)
+
+These rules describe the current finalized design direction and should be treated as collaboration defaults unless the user explicitly changes them.
+
+1. **Three-tier resource framing**
+- Early core resources are `大学生`, `科技点`, and `工程点`.
+- Mid/late academic progression introduces `创新点` as a dedicated research-tier resource.
+- `创新点` is conceptually harder to get than early basic resources and should be tied to academic infrastructure/units.
+
+2. **Undergraduates gate almost everything**
+- `大学生` remains the lowest-layer, highest-pressure shared input.
+- Industrial and academic growth should both compete for this pool.
+- Buildings and systems that consume or transform students are preferred over isolated linear upgrades.
+
+3. **Jobs are consumable units**
+- `职员` and `研究生` are not only production units; they can also be consumed by advanced buildings/research.
+- Unit removal actions are narrative actions (`解雇`, `毕业`) and should remove units directly without refund.
+- When adding content, prefer mixed costs (resources + units) for important milestones.
+
+4. **Auto-conversion buildings with explicit toggles**
+- Some buildings run conversion loops (consume inputs over time -> output units).
+- Conversion buildings must support manual `开启/关闭` control.
+- Toggleable conversion is a strategic pressure valve and should stay available to the player.
+
+5. **Research affordability UX rule**
+- If a research project is unlocked in structure but not affordable in cost, its action should appear as a locked/disabled state.
+- Research action text should clearly distinguish available vs unavailable vs completed.
+
+6. **Log noise control**
+- Do not log every basic click action.
+- Logs should prioritize meaningful events: research completion, building construction/sale, major mode toggles, and other milestone-level transitions.
+
+7. **Config-first balancing (strict)**
+- All numeric tuning (costs, conversion rates, unlock thresholds, production rates) must live in `game-config.ts`.
+- Skill docs describe concepts and constraints, not exact balance numbers.
+
 ## Naming And Modeling Rules
 
 1. **IDs drive logic**
@@ -97,7 +133,10 @@ Before finalizing design-related changes:
 1. Confirm all new numeric values live in `game-config.ts`.
 2. Confirm IDs are stable and hierarchical.
 3. Confirm UI stays compact and tooltip-friendly.
-4. Confirm bottlenecks still create meaningful tradeoffs.
-5. Confirm no gameplay rule is hidden in display text.
+4. Confirm conversion buildings that consume/produce units are toggleable when intended.
+5. Confirm bottlenecks still create meaningful tradeoffs around `大学生` and unit consumption.
+6. Confirm research availability state is visually clear (research vs locked vs completed).
+7. Confirm logs remain milestone-focused (no manual-click spam).
+8. Confirm no gameplay rule is hidden in display text.
 
 If any item fails, revise before shipping.

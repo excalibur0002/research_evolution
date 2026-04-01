@@ -1,5 +1,6 @@
 import { buildingDefinitions } from "../data/buildings";
 import {
+  baseHeadcountLimit,
   manualActionDefinitions,
   manualActionDefinitionsById,
   type ManualActionId,
@@ -13,6 +14,14 @@ import { techDefinitionsById, type TechId } from "../data/techs";
 import type { GameState } from "./state";
 
 type BuildingId = (typeof buildingDefinitions)[number]["id"];
+const RESOURCE_EPSILON = 1e-6;
+
+function normalizeResourceValue(value: number): number {
+  if (Math.abs(value) < RESOURCE_EPSILON) {
+    return 0;
+  }
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
 
 export function getManualYield(state: GameState, resourceId: ResourceId): number {
   const action = manualActionDefinitions.find(
@@ -55,16 +64,16 @@ export function addResource(state: GameState, resourceId: ResourceId, amount: nu
 
   const current = state.resources[resourceId];
   const limit = getResourceLimit(state, resourceId);
-  const next = Math.min(current + amount, limit);
+  const next = normalizeResourceValue(Math.min(current + amount, limit));
   state.resources[resourceId] = next;
-  return next - current;
+  return normalizeResourceValue(next - current);
 }
 
 export function clampAllResourcesToLimits(state: GameState): void {
   for (const resourceId of Object.keys(state.resources) as ResourceId[]) {
     const limit = getResourceLimit(state, resourceId);
     if (state.resources[resourceId] > limit) {
-      state.resources[resourceId] = limit;
+      state.resources[resourceId] = normalizeResourceValue(limit);
     }
   }
 }
@@ -79,6 +88,9 @@ export function getProductionPerSecond(state: GameState, resourceId: ResourceId)
   }
 
   for (const building of buildingDefinitions) {
+    if (building.toggleable && !state.buildingEnabled[building.id]) {
+      continue;
+    }
     const count = state.buildings[building.id];
     const base = building.producesPerSecond?.[resourceId] ?? 0;
     total += count * base;
@@ -86,12 +98,73 @@ export function getProductionPerSecond(state: GameState, resourceId: ResourceId)
 
   let multiplier = 1;
   for (const building of buildingDefinitions) {
+    if (building.toggleable && !state.buildingEnabled[building.id]) {
+      continue;
+    }
     const count = state.buildings[building.id];
     const bonus = building.productionMultiplier?.[resourceId] ?? 0;
     multiplier += count * bonus;
   }
 
-  return total * multiplier;
+  let conversionConsumption = 0;
+  for (const building of buildingDefinitions) {
+    if (building.toggleable && !state.buildingEnabled[building.id]) {
+      continue;
+    }
+    const count = state.buildings[building.id];
+    const cycleSeconds = building.conversion?.cycleSeconds ?? 0;
+    if (count <= 0 || cycleSeconds <= 0) {
+      continue;
+    }
+    const consumedPerCycle = building.conversion?.inputResources?.[resourceId] ?? 0;
+    conversionConsumption += (count * consumedPerCycle) / cycleSeconds;
+  }
+
+  return total * multiplier - conversionConsumption;
+}
+
+export function getHeadcountLimit(state: GameState): number {
+  let total = baseHeadcountLimit;
+
+  for (const building of buildingDefinitions) {
+    const count = state.buildings[building.id];
+    const bonus = building.headcountBonus ?? 0;
+    total += count * bonus;
+  }
+
+  return Math.max(0, total);
+}
+
+export function getHeadcountUsed(state: GameState): number {
+  let total = 0;
+  for (const job of jobDefinitions) {
+    total += state.jobs[job.id] * (job.headcountCost ?? 1);
+  }
+  return total;
+}
+
+export function hasHeadcountForJob(state: GameState, jobId: JobId): boolean {
+  const job = jobDefinitionsById[jobId];
+  return getHeadcountUsed(state) + (job.headcountCost ?? 1) <= getHeadcountLimit(state);
+}
+
+export function hasHeadcountForJobs(
+  state: GameState,
+  jobs: Partial<Record<JobId, number>> | undefined,
+): boolean {
+  if (!jobs) {
+    return true;
+  }
+
+  let added = 0;
+  for (const [jobId, amount] of Object.entries(jobs)) {
+    if ((amount ?? 0) <= 0) {
+      continue;
+    }
+    const headcountCost = jobDefinitionsById[jobId as JobId].headcountCost ?? 1;
+    added += headcountCost * (amount ?? 0);
+  }
+  return getHeadcountUsed(state) + added <= getHeadcountLimit(state);
 }
 
 function meetsResourceRequirements(
@@ -209,7 +282,23 @@ export function canAfford(
   cost: Partial<Record<ResourceId, number>>,
 ): boolean {
   return Object.entries(cost).every(([resourceId, amount]) => {
-    return state.resources[resourceId as ResourceId] >= (amount ?? 0);
+    return (
+      state.resources[resourceId as ResourceId] + RESOURCE_EPSILON >=
+      (amount ?? 0)
+    );
+  });
+}
+
+export function canAffordJobs(
+  state: GameState,
+  cost: Partial<Record<JobId, number>> | undefined,
+): boolean {
+  if (!cost) {
+    return true;
+  }
+
+  return Object.entries(cost).every(([jobId, amount]) => {
+    return state.jobs[jobId as JobId] + RESOURCE_EPSILON >= (amount ?? 0);
   });
 }
 
@@ -218,8 +307,33 @@ export function spendCost(
   cost: Partial<Record<ResourceId, number>>,
 ): void {
   for (const [resourceId, amount] of Object.entries(cost)) {
-    state.resources[resourceId as ResourceId] -= amount ?? 0;
+    const current = state.resources[resourceId as ResourceId];
+    const next = normalizeResourceValue(Math.max(0, current - (amount ?? 0)));
+    state.resources[resourceId as ResourceId] = next;
   }
+}
+
+export function spendJobCost(
+  state: GameState,
+  cost: Partial<Record<JobId, number>> | undefined,
+): void {
+  if (!cost) {
+    return;
+  }
+
+  for (const [jobId, amount] of Object.entries(cost)) {
+    const current = state.jobs[jobId as JobId];
+    const next = normalizeResourceValue(Math.max(0, current - (amount ?? 0)));
+    state.jobs[jobId as JobId] = next;
+  }
+}
+
+export function setBuildingEnabled(
+  state: GameState,
+  buildingId: BuildingId,
+  enabled: boolean,
+): void {
+  state.buildingEnabled[buildingId] = enabled;
 }
 
 export function getUnlockedFlags(state: GameState) {
@@ -230,6 +344,10 @@ export function getUnlockedFlags(state: GameState) {
     changjiangScholar: isBuildingUnlocked(state, "bld.acad.changjiang_scholar"),
     gradAdmissions: isTechUnlocked(state, "tech.acad.grad_admissions"),
     processManagement: isTechUnlocked(state, "tech.ops.process_management"),
+    innovation:
+      state.jobs["job.acad.research_grad"] >= 1 ||
+      state.buildings["bld.acad.junior_faculty"] >= 1 ||
+      state.resources["res.acad.innovation_points"] > 0,
     space:
       state.resources["res.core.topic_points"] >= 120 &&
       state.resources["res.core.project_points"] >= 80,

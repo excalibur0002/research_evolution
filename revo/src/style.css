@@ -48,10 +48,42 @@ button:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
+button:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+  border-color: #9e6a2f;
+}
+
+.btn-flash {
+  animation: buttonFlash 220ms ease-out;
+}
+
+@keyframes buttonFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(127, 84, 36, 0.35);
+    background: var(--button-hover);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(127, 84, 36, 0);
+    background: var(--button);
+  }
+}
+
 button:disabled {
   cursor: default;
   color: var(--muted);
   opacity: 0.7;
+}
+
+button[data-state="soft-disabled"] {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
+button[data-state="locked"] {
+  opacity: 0.92;
+  background: #ddd4c4;
+  color: #716658;
+  border-color: #c2b49e;
 }
 
 .app-shell {
@@ -184,6 +216,17 @@ button:disabled {
 .row-action {
   display: flex;
   align-items: center;
+}
+
+.action-pair {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.action-pair button {
+  min-width: 72px;
 }
 
 .count-tag {

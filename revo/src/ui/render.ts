@@ -1,11 +1,15 @@
 import { buildingDefinitions } from "../data/buildings";
 import { manualActionDefinitions } from "../data/game-config";
-import { jobDefinitions } from "../data/jobs";
+import { jobDefinitions, jobNameById } from "../data/jobs";
 import { resourceDefinitions, resourceNameById } from "../data/resources";
 import { techDefinitions } from "../data/techs";
 import {
   canAfford,
+  canAffordJobs,
+  getHeadcountLimit,
+  getHeadcountUsed,
   isManualActionUnlocked,
+  hasHeadcountForJob,
   getProductionPerSecond,
   getResourceLimit,
   getUnlockedFlags,
@@ -16,31 +20,94 @@ import {
 import type { GameState } from "../game/state";
 import { formatNumber } from "../utils/format";
 
-function renderResourceRows(state: GameState): string {
-  const unlocked = getUnlockedFlags(state);
+type ResourceRowKey = string;
 
-  return resourceDefinitions
+function formatResourceCostText(
+  cost: Partial<Record<keyof typeof resourceNameById, number>> | undefined,
+): string {
+  if (!cost) {
+    return "";
+  }
+
+  return Object.entries(cost)
+    .map(
+      ([resourceId, amount]) =>
+        `${resourceNameById[resourceId as keyof typeof resourceNameById]} ${amount}`,
+    )
+    .join(" / ");
+}
+
+function formatJobCostText(cost: Partial<Record<keyof typeof jobNameById, number>> | undefined): string {
+  if (!cost) {
+    return "";
+  }
+
+  return Object.entries(cost)
+    .map(([jobId, amount]) => `${jobNameById[jobId as keyof typeof jobNameById]} ${amount}`)
+    .join(" / ");
+}
+
+function formatCombinedCostText(
+  resourceCost: Partial<Record<keyof typeof resourceNameById, number>> | undefined,
+  jobCost: Partial<Record<keyof typeof jobNameById, number>> | undefined,
+): string {
+  const chunks = [formatResourceCostText(resourceCost), formatJobCostText(jobCost)].filter(Boolean);
+  return chunks.join(" / ");
+}
+
+function getVisibleResourceRowKeys(state: GameState): ResourceRowKey[] {
+  const unlocked = getUnlockedFlags(state);
+  const resourceKeys = resourceDefinitions
     .filter(
       (resource) =>
         resource.visibleFromStart ||
+        (resource.id === "res.acad.innovation_points" && unlocked.innovation) ||
         (resource.id === "res.future.space_points" && unlocked.space),
     )
-    .map((resource) => {
-      const perSecond = getProductionPerSecond(state, resource.id);
-      const amount = state.resources[resource.id];
-      const limit = getResourceLimit(state, resource.id);
+    .map((resource) => resource.id);
 
-      return `
-        <div class="resource-row compact-resource" title="${resource.description}">
-          <div class="row-title">${resource.name}</div>
-          <div class="row-metric">
-            <strong>${formatNumber(amount)}/${formatNumber(limit)}</strong>
-            <span>${perSecond >= 0 ? "+" : ""}${formatNumber(perSecond)}/秒</span>
-          </div>
-        </div>
-      `;
-    })
+  return [...resourceKeys, "meta.headcount"];
+}
+
+function renderResourceRows(state: GameState): string {
+  return getVisibleResourceRowKeys(state)
+    .map((rowKey) => renderResourceRowByKey(state, rowKey))
     .join("");
+}
+
+function renderResourceRowByKey(state: GameState, rowKey: ResourceRowKey): string {
+  if (rowKey === "meta.headcount") {
+    const used = getHeadcountUsed(state);
+    const limit = getHeadcountLimit(state);
+    return `
+      <div class="resource-row compact-resource" data-resource-id="${rowKey}" title="编制决定可沉淀的职员与研究生总量。">
+        <div class="row-title">编制</div>
+        <div class="row-metric">
+          <strong data-field="value">${used}/${limit}</strong>
+          <span data-field="rate">职员 + 研究生</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const resource = resourceDefinitions.find((entry) => entry.id === rowKey);
+  if (!resource) {
+    return "";
+  }
+
+  const perSecond = getProductionPerSecond(state, resource.id);
+  const amount = state.resources[resource.id];
+  const limit = getResourceLimit(state, resource.id);
+
+  return `
+    <div class="resource-row compact-resource" data-resource-id="${resource.id}" title="${resource.description}">
+      <div class="row-title">${resource.name}</div>
+      <div class="row-metric">
+        <strong data-field="value">${formatNumber(amount)}/${formatNumber(limit)}</strong>
+        <span data-field="rate">${perSecond >= 0 ? "+" : ""}${formatNumber(perSecond)}/秒</span>
+      </div>
+    </div>
+  `;
 }
 
 function renderJobRows(state: GameState): string {
@@ -60,7 +127,14 @@ function renderJobRows(state: GameState): string {
         )
         .join(" / ");
       const canAcquire = canAfford(state, job.cost);
-      const action = `<button data-action="acquire-job" data-id="${job.id}" ${canAcquire ? "" : 'data-state="soft-disabled"'}>${job.actionLabel}</button>`;
+      const hasHeadcount = hasHeadcountForJob(state, job.id);
+      const sellable = state.jobs[job.id] > 0;
+      const action = `
+        <div class="action-pair">
+          <button data-action="acquire-job" data-id="${job.id}" ${(canAcquire && hasHeadcount) ? "" : "disabled"}>${job.actionLabel}</button>
+          <button data-action="sell-job" data-id="${job.id}" ${sellable ? "" : "disabled"}>${job.releaseLabel}</button>
+        </div>
+      `;
 
       return `
         <div class="list-row">
@@ -68,7 +142,7 @@ function renderJobRows(state: GameState): string {
             <div class="row-title">${job.name} <span class="count-tag">x${state.jobs[job.id]}</span></div>
             <div class="row-meta">${job.description}</div>
             <div class="row-meta">${produces || "当前不产出资源"}</div>
-            <div class="row-meta">成本: ${costText || "无"}</div>
+            <div class="row-meta">沉淀成本: ${costText || "无"}</div>
           </div>
           <div class="row-action">${action}</div>
         </div>
@@ -81,23 +155,34 @@ function renderBuildingRows(state: GameState): string {
   return buildingDefinitions
     .filter((building) => isBuildingUnlocked(state, building.id))
     .map((building) => {
-      const costText = Object.entries(building.cost)
-        .map(
-          ([resourceId, amount]) =>
-            `${resourceNameById[resourceId as keyof typeof resourceNameById]} ${amount}`,
-        )
-        .join(" / ");
-      const canBuy = canAfford(state, building.cost);
+      const costText = formatCombinedCostText(building.cost, building.jobCost);
+      const canBuy = canAfford(state, building.cost) && canAffordJobs(state, building.jobCost);
+      const sellable = state.buildings[building.id] > 0;
+      const canToggle = building.toggleable && state.buildings[building.id] > 0;
+      const toggleLabel = state.buildingEnabled[building.id] ? "关闭" : "开启";
+      const statusText = building.toggleable
+        ? state.buildingEnabled[building.id]
+          ? "运行中"
+          : "已关闭"
+        : "常开";
+      const conversionText =
+        building.conversion
+          ? ` | 转化: ${building.effectText}`
+          : ` | 效果: ${building.effectText}`;
 
       return `
         <div class="list-row">
           <div>
             <div class="row-title">${building.name} <span class="count-tag">x${state.buildings[building.id]}</span></div>
             <div class="row-meta">${building.description}</div>
-            <div class="row-meta">成本: ${costText} | 效果: ${building.effectText}</div>
+            <div class="row-meta">建造成本: ${costText} | 状态: ${statusText}${conversionText}</div>
           </div>
           <div class="row-action">
-            <button data-action="buy-building" data-id="${building.id}" ${canBuy ? "" : 'data-state="soft-disabled"'}>建造</button>
+            <div class="action-pair">
+              <button data-action="buy-building" data-id="${building.id}" ${canBuy ? "" : "disabled"}>建造</button>
+              <button data-action="sell-building" data-id="${building.id}" ${sellable ? "" : "disabled"}>出售</button>
+              ${building.toggleable ? `<button data-action="toggle-building" data-id="${building.id}" ${canToggle ? "" : "disabled"}>${toggleLabel}</button>` : ""}
+            </div>
           </div>
         </div>
       `;
@@ -109,13 +194,15 @@ function renderTechRows(state: GameState): string {
   return techDefinitions
     .filter((tech) => isTechUnlocked(state, tech.id))
     .map((tech) => {
-      const costText = Object.entries(tech.cost)
-        .map(
-          ([resourceId, amount]) =>
-            `${resourceNameById[resourceId as keyof typeof resourceNameById]} ${amount}`,
-        )
-        .join(" / ");
+      const costText = formatCombinedCostText(tech.cost, tech.jobCost);
       const status = state.techs[tech.id] ? "已完成" : "待研究";
+      const affordable = canAfford(state, tech.cost) && canAffordJobs(state, tech.jobCost);
+      const actionLabel = state.techs[tech.id] ? "已完成" : affordable ? "研究" : "锁定";
+      const actionAttrs = state.techs[tech.id]
+        ? "disabled"
+        : affordable
+          ? ""
+          : 'disabled data-state="locked"';
 
       return `
         <div class="list-row">
@@ -125,7 +212,7 @@ function renderTechRows(state: GameState): string {
             <div class="row-meta">成本: ${costText}</div>
           </div>
           <div class="row-action">
-            <button data-action="research-tech" data-id="${tech.id}" ${state.techs[tech.id] ? "disabled" : ""}>研究</button>
+            <button data-action="research-tech" data-id="${tech.id}" ${actionAttrs}>${actionLabel}</button>
           </div>
         </div>
       `;
@@ -158,7 +245,7 @@ export function renderApp(root: HTMLElement, state: GameState): void {
             <h2>基础资源</h2>
             <p>悬停可查看资源说明，显示格式为 当前/上限 与 每秒变化。</p>
           </div>
-          <div class="panel-body">${renderResourceRows(state)}</div>
+          <div class="panel-body" data-panel="resources">${renderResourceRows(state)}</div>
         </aside>
 
         <section class="content-column">
@@ -166,7 +253,7 @@ export function renderApp(root: HTMLElement, state: GameState): void {
             <div class="panel-header">
               <h1>科研与工程的互锁增量原型</h1>
               <p>
-                大学生作为底层资源被持续消耗与沉淀，科技点和项目点共同驱动建筑与科技解锁。
+                大学生作为底层资源被持续消耗与沉淀，科技点和工程点共同驱动建筑与科技解锁。
               </p>
             </div>
           </section>
@@ -222,4 +309,76 @@ export function renderApp(root: HTMLElement, state: GameState): void {
       </section>
     </main>
   `;
+}
+
+export function refreshResourcePanel(root: HTMLElement, state: GameState): boolean {
+  const panel = root.querySelector<HTMLElement>('[data-panel="resources"]');
+  if (!panel) {
+    return false;
+  }
+
+  const rows = Array.from(panel.querySelectorAll<HTMLElement>("[data-resource-id]"));
+  const visibleRowKeys = getVisibleResourceRowKeys(state);
+  const structureMatches =
+    rows.length === visibleRowKeys.length &&
+    rows.every((row, index) => row.dataset.resourceId === visibleRowKeys[index]);
+
+  if (!structureMatches) {
+    panel.innerHTML = renderResourceRows(state);
+    return true;
+  }
+
+  visibleRowKeys.forEach((rowKey, index) => {
+    const row = rows[index];
+    const valueNode = row.querySelector<HTMLElement>('[data-field="value"]');
+    const rateNode = row.querySelector<HTMLElement>('[data-field="rate"]');
+    if (!valueNode || !rateNode) {
+      return;
+    }
+
+    if (rowKey === "meta.headcount") {
+      const used = getHeadcountUsed(state);
+      const limit = getHeadcountLimit(state);
+      valueNode.textContent = `${used}/${limit}`;
+      rateNode.textContent = "职员 + 研究生";
+      return;
+    }
+
+    const resource = resourceDefinitions.find((entry) => entry.id === rowKey);
+    if (!resource) {
+      return;
+    }
+
+    const amount = state.resources[resource.id];
+    const limit = getResourceLimit(state, resource.id);
+    const perSecond = getProductionPerSecond(state, resource.id);
+    valueNode.textContent = `${formatNumber(amount)}/${formatNumber(limit)}`;
+    rateNode.textContent = `${perSecond >= 0 ? "+" : ""}${formatNumber(perSecond)}/秒`;
+  });
+
+  return false;
+}
+
+export function getUiUnlockFingerprint(state: GameState): string {
+  const manualActions = manualActionDefinitions
+    .filter((action) => isManualActionUnlocked(state, action.id))
+    .map((action) => action.id)
+    .join(",");
+  const jobs = jobDefinitions
+    .filter((job) => isJobUnlocked(state, job.id))
+    .map((job) => job.id)
+    .join(",");
+  const buildings = buildingDefinitions
+    .filter((building) => isBuildingUnlocked(state, building.id))
+    .map((building) => building.id)
+    .join(",");
+  const techs = techDefinitions
+    .filter((tech) => isTechUnlocked(state, tech.id))
+    .map((tech) => tech.id)
+    .join(",");
+  const unlockedFlags = getUnlockedFlags(state);
+  const innovationFlag = unlockedFlags.innovation ? "innovation:1" : "innovation:0";
+  const spaceFlag = unlockedFlags.space ? "space:1" : "space:0";
+
+  return [manualActions, jobs, buildings, techs, innovationFlag, spaceFlag].join("|");
 }

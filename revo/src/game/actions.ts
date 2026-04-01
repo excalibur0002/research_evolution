@@ -1,23 +1,49 @@
 import { buildingDefinitionsById, type BuildingId } from "../data/buildings";
 import { manualActionDefinitions } from "../data/game-config";
-import { jobDefinitionsById, type JobId } from "../data/jobs";
+import { jobDefinitionsById, jobNameById, type JobId } from "../data/jobs";
 import { resourceNameById, type ResourceId } from "../data/resources";
 import { techDefinitionsById, type TechId } from "../data/techs";
 import {
   addResource,
   canAfford,
+  canAffordJobs,
+  clampAllResourcesToLimits,
   getManualYield,
+  hasHeadcountForJob,
   isBuildingUnlocked,
   isJobUnlocked,
   isManualActionUnlocked,
   isTechUnlocked,
+  setBuildingEnabled,
   spendCost,
+  spendJobCost,
 } from "./formulas";
 import type { GameState } from "./state";
 
 function pushLog(state: GameState, message: string): void {
   state.log.unshift(message);
   state.log = state.log.slice(0, 10);
+}
+
+function refundHalfCost(
+  state: GameState,
+  cost: Partial<Record<ResourceId, number>>,
+): string {
+  const refundChunks: string[] = [];
+
+  for (const [resourceId, amount] of Object.entries(cost)) {
+    const refundAmount = (amount ?? 0) * 0.5;
+    if (refundAmount <= 0) {
+      continue;
+    }
+
+    const gained = addResource(state, resourceId as ResourceId, refundAmount);
+    if (gained > 0) {
+      refundChunks.push(`${gained.toFixed(2)} ${resourceNameById[resourceId as ResourceId]}`);
+    }
+  }
+
+  return refundChunks.join(" / ");
 }
 
 export function gatherResource(state: GameState, resourceId: ResourceId): void {
@@ -29,30 +55,24 @@ export function gatherResource(state: GameState, resourceId: ResourceId): void {
   }
 
   if (!isManualActionUnlocked(state, action.id)) {
-    pushLog(state, `${action.label}尚未解锁。`);
     return;
   }
 
   const amount = getManualYield(state, resourceId);
-  const gained = addResource(state, resourceId, amount);
-  const actionLabel = action.logLabel;
-
-  if (gained > 0) {
-    pushLog(state, `${actionLabel}获得 ${gained.toFixed(1)} ${resourceNameById[resourceId]}`);
-  } else {
-    pushLog(state, `${resourceNameById[resourceId]}已达到上限。`);
-  }
+  addResource(state, resourceId, amount);
 }
 
 export function acquireJob(state: GameState, jobId: JobId): void {
   const job = jobDefinitionsById[jobId];
   if (!isJobUnlocked(state, jobId)) {
-    pushLog(state, `${job.name} 还未解锁。`);
     return;
   }
 
   if (job.cost && !canAfford(state, job.cost)) {
-    pushLog(state, `${job.name} 所需资源不足。`);
+    return;
+  }
+
+  if (!hasHeadcountForJob(state, jobId)) {
     return;
   }
 
@@ -61,44 +81,101 @@ export function acquireJob(state: GameState, jobId: JobId): void {
   }
 
   state.jobs[job.id] += 1;
-  pushLog(state, `${job.actionLabel}${job.name}成功。`);
+}
+
+export function sellJob(state: GameState, jobId: JobId): void {
+  const job = jobDefinitionsById[jobId];
+  if (state.jobs[job.id] <= 0) {
+    return;
+  }
+
+  state.jobs[job.id] -= 1;
 }
 
 export function buyBuilding(state: GameState, buildingId: BuildingId): void {
   const building = buildingDefinitionsById[buildingId];
   if (!isBuildingUnlocked(state, buildingId)) {
-    pushLog(state, `${building.name} 还未解锁。`);
     return;
   }
 
-  if (!canAfford(state, building.cost)) {
-    pushLog(state, `${building.name} 所需资源不足。`);
+  if (!canAfford(state, building.cost) || !canAffordJobs(state, building.jobCost)) {
     return;
   }
 
   spendCost(state, building.cost);
+  spendJobCost(state, building.jobCost);
+  if (building.toggleable && state.buildings[building.id] <= 0) {
+    setBuildingEnabled(state, building.id, true);
+  }
   state.buildings[building.id] += 1;
   pushLog(state, `建成 ${building.name}。`);
+}
+
+export function sellBuilding(state: GameState, buildingId: BuildingId): void {
+  const building = buildingDefinitionsById[buildingId];
+  if (state.buildings[building.id] <= 0) {
+    return;
+  }
+
+  state.buildings[building.id] -= 1;
+  if (state.buildings[building.id] <= 0) {
+    setBuildingEnabled(state, building.id, true);
+    state.buildingConversionProgress[building.id] = 0;
+  }
+  clampAllResourcesToLimits(state);
+  const refundText = refundHalfCost(state, building.cost);
+  if (refundText) {
+    pushLog(state, `出售${building.name}，返还 ${refundText}。`);
+  } else {
+    pushLog(state, `出售${building.name}。`);
+  }
 }
 
 export function researchTech(state: GameState, techId: TechId): void {
   const tech = techDefinitionsById[techId];
   if (!isTechUnlocked(state, techId)) {
-    pushLog(state, `${tech.name} 还未解锁。`);
     return;
   }
 
   if (state.techs[tech.id]) {
-    pushLog(state, `${tech.name} 已完成。`);
     return;
   }
 
-  if (!canAfford(state, tech.cost)) {
-    pushLog(state, `${tech.name} 所需资源不足。`);
+  if (!canAfford(state, tech.cost) || !canAffordJobs(state, tech.jobCost)) {
     return;
   }
 
   spendCost(state, tech.cost);
+  spendJobCost(state, tech.jobCost);
   state.techs[tech.id] = true;
   pushLog(state, `完成研究：${tech.name}。`);
+}
+
+export function toggleBuilding(state: GameState, buildingId: BuildingId): void {
+  const building = buildingDefinitionsById[buildingId];
+  if (!building.toggleable) {
+    pushLog(state, `${building.name} 不支持开关。`);
+    return;
+  }
+
+  if (state.buildings[building.id] <= 0) {
+    pushLog(state, `你还没有可切换的${building.name}。`);
+    return;
+  }
+
+  const enabled = state.buildingEnabled[building.id];
+  const nextEnabled = !enabled;
+  setBuildingEnabled(state, building.id, nextEnabled);
+  if (!nextEnabled) {
+    state.buildingConversionProgress[building.id] = 0;
+  }
+
+  if (nextEnabled) {
+    pushLog(state, `开启${building.name}，自动沉淀恢复运行。`);
+    return;
+  }
+  const outputText = Object.entries(building.conversion?.outputJobs ?? {})
+    .map(([jobId, amount]) => `${amount}${jobNameById[jobId as JobId]}`)
+    .join(" / ");
+  pushLog(state, `关闭${building.name}${outputText ? `（暂停${outputText}产出）` : ""}。`);
 }

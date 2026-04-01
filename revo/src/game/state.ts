@@ -8,11 +8,15 @@ export type ResourceState = Record<ResourceId, number>;
 export type JobState = Record<JobId, number>;
 export type BuildingState = Record<BuildingId, number>;
 export type TechState = Record<TechId, boolean>;
+export type BuildingToggleState = Record<BuildingId, boolean>;
+export type BuildingConversionProgressState = Record<BuildingId, number>;
 
 export type GameState = {
   resources: ResourceState;
   jobs: JobState;
   buildings: BuildingState;
+  buildingEnabled: BuildingToggleState;
+  buildingConversionProgress: BuildingConversionProgressState;
   techs: TechState;
   log: string[];
   lastTickAt: number;
@@ -32,6 +36,18 @@ function createBuildingState(): BuildingState {
   ) as BuildingState;
 }
 
+function createBuildingToggleState(): BuildingToggleState {
+  return Object.fromEntries(
+    buildingDefinitions.map((building) => [building.id, true]),
+  ) as BuildingToggleState;
+}
+
+function createBuildingConversionProgressState(): BuildingConversionProgressState {
+  return Object.fromEntries(
+    buildingDefinitions.map((building) => [building.id, 0]),
+  ) as BuildingConversionProgressState;
+}
+
 function createTechState(): TechState {
   return Object.fromEntries(techDefinitions.map((tech) => [tech.id, false])) as TechState;
 }
@@ -49,6 +65,12 @@ export function createInitialState(): GameState {
     buildings: {
       ...createBuildingState(),
       ...startingState.buildings,
+    },
+    buildingEnabled: {
+      ...createBuildingToggleState(),
+    },
+    buildingConversionProgress: {
+      ...createBuildingConversionProgressState(),
     },
     techs: {
       ...createTechState(),
