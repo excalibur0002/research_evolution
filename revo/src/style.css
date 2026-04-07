@@ -585,6 +585,10 @@ button[data-state="warning"] {
   overflow: auto;
 }
 
+.action-feedback-modal {
+  width: min(540px, calc(100vw - 20px));
+}
+
 .offline-report-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -609,6 +613,54 @@ button[data-state="warning"] {
   margin-top: 14px;
   display: flex;
   justify-content: flex-end;
+}
+
+.floating-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translate(-50%, 0);
+  z-index: 45;
+  max-width: min(620px, calc(100vw - 32px));
+  padding: 0.68rem 0.9rem;
+  border: 1px solid var(--accent);
+  background: var(--panel-strong-surface);
+  color: var(--text);
+  box-shadow: 0 10px 20px var(--shadow);
+  animation: floatingNoticeIn 220ms ease-out;
+}
+
+@keyframes floatingNoticeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.manual-action-gain {
+  position: fixed;
+  z-index: 46;
+  pointer-events: none;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-shadow: 0 2px 4px var(--shadow);
+  animation: manualActionGainUp 700ms ease-out forwards;
+}
+
+@keyframes manualActionGainUp {
+  from {
+    opacity: 0.95;
+    transform: translate(-50%, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -24px);
+  }
 }
 
 .tab-strip {
@@ -835,4 +887,5 @@ button[data-state="warning"] {
     flex-direction: column;
     align-items: stretch;
   }
+
 }

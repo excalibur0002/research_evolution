@@ -42,6 +42,12 @@ function processBuildingConversions(state: GameState, deltaSeconds: number): boo
         !canAffordJobs(state, conversion.inputJobs) ||
         !hasHeadcountForJobs(state, outputJobs)
       ) {
+        // Prevent "debt-like" backlog from growing without bound when a line is starved.
+        // Keeping at most one pending cycle preserves responsiveness once resources recover.
+        state.buildingConversionProgress[building.id] = Math.min(
+          state.buildingConversionProgress[building.id],
+          1,
+        );
         break;
       }
 

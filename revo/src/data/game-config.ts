@@ -1265,7 +1265,7 @@ export const techDefinitions: TechDefinition[] = [
   {
     id: "tech.cross.frontier_initiative",
     name: "前沿探索立项",
-    description: "当探索被正式写进议程，未定域才会被允许挂牌。",
+    description: "当探索被正式写进议程，才会打开未定域的大门。",
     effectText: "解锁未定域，并激活生命课题线",
     unlockedFromStart: false,
     unlockWhen: {

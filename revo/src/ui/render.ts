@@ -46,6 +46,12 @@ type ResourceRowKey =
   | "meta.lineage"
   | "meta.starCharts";
 
+export type ActionFeedbackModal = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+};
+
 const resourceProducerBuildingNamesById: Partial<Record<ResourceId, string[]>> = (() => {
   const map: Partial<Record<ResourceId, string[]>> = {};
 
@@ -77,7 +83,7 @@ function getModeCopy(copy: ModeCopy, showDevText: boolean): string {
 function getResourceProducerHint(resourceId: ResourceId): string {
   const producerNames = resourceProducerBuildingNamesById[resourceId] ?? [];
   if (producerNames.length === 0) {
-    return "相关设施产出：暂无直接设施产出。";
+    return "";
   }
   return `相关设施产出：${producerNames.join("、")}。`;
 }
@@ -311,9 +317,13 @@ function renderResourceRowByKey(
   const perSecond = getProductionPerSecond(state, resource.id);
   const amount = state.resources[resource.id];
   const limit = getResourceLimit(state, resource.id);
+  const producerHint = getResourceProducerHint(resource.id);
+  const titleText = producerHint
+    ? `${resource.description} ${producerHint}`
+    : resource.description;
 
   return `
-    <div class="resource-row compact-resource" data-resource-id="${resource.id}" title="${resource.description} ${getResourceProducerHint(resource.id)}">
+    <div class="resource-row compact-resource" data-resource-id="${resource.id}" title="${titleText}">
       <div class="row-title">${resource.name}</div>
       <div class="row-metric">
         <strong data-field="value">${formatNumber(amount)}/${formatNumber(limit)}</strong>
@@ -353,10 +363,20 @@ function renderJobRows(state: GameState, showDevText: boolean): string {
       const studyRouteEnabled = canStudyRoute && state.jobs["job.ops.staff"] >= 2;
       const action = `
         <div class="action-pair">
-          <button data-action="acquire-job" data-id="${job.id}" ${(canAcquire && hasHeadcount) ? "" : "disabled"}>${job.actionLabel}</button>
-          ${canEmploymentRoute ? `<button data-action="send-grad-to-employment" ${employmentRouteEnabled ? "" : "disabled"}>就业</button>` : ""}
-          ${canStudyRoute ? `<button data-action="send-staff-to-study" ${studyRouteEnabled ? "" : "disabled"}>进修</button>` : ""}
-          <button data-action="sell-job" data-id="${job.id}" ${sellable ? "" : "disabled"}>${job.releaseLabel}</button>
+          <button
+            data-action="acquire-job"
+            data-id="${job.id}"
+            title="大学生转化为${job.name}"
+            ${(canAcquire && hasHeadcount) ? "" : "disabled"}
+          >${job.actionLabel}</button>
+          ${canEmploymentRoute ? `<button data-action="send-grad-to-employment" title="2研究生转为1职员，不返还培养资源" ${employmentRouteEnabled ? "" : "disabled"}>就业</button>` : ""}
+          ${canStudyRoute ? `<button data-action="send-staff-to-study" title="2职员转为1研究生，不返还培养资源" ${studyRouteEnabled ? "" : "disabled"}>进修</button>` : ""}
+          <button
+            data-action="sell-job"
+            data-id="${job.id}"
+            title="释放当前${job.name}，不返还培养资源"
+            ${sellable ? "" : "disabled"}
+          >${job.releaseLabel}</button>
         </div>
       `;
 
@@ -401,9 +421,9 @@ function renderBuildingRows(
       const activeControl = building.toggleable
         ? `
             <div class="runtime-stepper" title="${softGuard.notice || "调整运行中的设施数量"}" ${softGuard.warnOnIncrease ? 'data-state="warning"' : ""}>
-              <button data-action="decrease-building-active" data-id="${building.id}" ${canDecrease ? "" : "disabled"}>-</button>
+              <button data-action="decrease-building-active" data-id="${building.id}" title="暂时关闭" ${canDecrease ? "" : "disabled"}>-</button>
               <span class="runtime-readout">${activeCount}/${ownedCount}</span>
-              <button data-action="increase-building-active" data-id="${building.id}" ${softGuard.warnOnIncrease ? 'data-state="warning"' : ""} title="${softGuard.notice || "增加运行中的设施数量"}" ${canIncrease ? "" : "disabled"}>+</button>
+              <button data-action="increase-building-active" data-id="${building.id}" ${softGuard.warnOnIncrease ? 'data-state="warning"' : ""} title="暂时开启" ${canIncrease ? "" : "disabled"}>+</button>
             </div>
           `
         : `<div class="runtime-stepper runtime-stepper--placeholder" aria-hidden="true"><span class="runtime-readout">0/0</span></div>`;
@@ -421,7 +441,7 @@ function renderBuildingRows(
             <div class="building-action-grid">
               <div class="building-action-line">
                 <button data-action="buy-building" data-id="${building.id}" ${canBuy ? "" : "disabled"}>建造</button>
-                <button data-action="sell-building" data-id="${building.id}" ${sellable ? "" : "disabled"}>出售</button>
+                <button data-action="sell-building" data-id="${building.id}" title="返回一半资源" ${sellable ? "" : "disabled"}>出售</button>
               </div>
               <div class="building-action-line">
                 ${activeControl}
@@ -768,10 +788,28 @@ function renderLifeBreakthroughPanel(state: GameState, showDevText: boolean): st
         <p>${getModeCopy(breakthroughCopy.activeDescription, showDevText)}</p>
       </div>
       <div class="frontier-actions">
-        <button data-action="life-breakthrough" data-id="1" ${canRunLifeBreakthrough(state, 1) ? "" : "disabled"}>${breakthroughCopy.actions.single}</button>
-        <button data-action="life-breakthrough" data-id="10" ${canRunLifeBreakthrough(state, 10) ? "" : "disabled"}>${breakthroughCopy.actions.multi}</button>
-        <button data-action="life-evidence-pity" ${canSpendEvidenceForPity(state) ? "" : "disabled"}>${breakthroughCopy.actions.pity}</button>
-        <button data-action="life-evidence-variant" ${canExchangeEvidenceForVariant(state) ? "" : "disabled"}>${breakthroughCopy.actions.variant}</button>
+        <button
+          data-action="life-breakthrough"
+          data-id="1"
+          title="按单次花费进行 1 次破题抽取"
+          ${canRunLifeBreakthrough(state, 1) ? "" : "disabled"}
+        >${breakthroughCopy.actions.single}</button>
+        <button
+          data-action="life-breakthrough"
+          data-id="10"
+          title="按并行花费连续进行 10 次破题（需先解锁）"
+          ${canRunLifeBreakthrough(state, 10) ? "" : "disabled"}
+        >${breakthroughCopy.actions.multi}</button>
+        <button
+          data-action="life-evidence-pity"
+          title="消耗 20 旁证，把保底累计向前推进 5 格"
+          ${canSpendEvidenceForPity(state) ? "" : "disabled"}
+        >${breakthroughCopy.actions.pity}</button>
+        <button
+          data-action="life-evidence-variant"
+          title="消耗 45 旁证，直接换取 1 变异株"
+          ${canExchangeEvidenceForVariant(state) ? "" : "disabled"}
+        >${breakthroughCopy.actions.variant}</button>
       </div>
       <div class="frontier-meta-grid">
         ${renderSummaryCard(
@@ -961,6 +999,30 @@ function renderHardResetModal(): string {
   `;
 }
 
+function renderActionFeedbackModal(modal: ActionFeedbackModal): string {
+  return `
+    <section class="offline-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="action-feedback-modal-title">
+      <div class="offline-modal panel action-feedback-modal">
+        <div class="panel-header">
+          <h2 id="action-feedback-modal-title">${modal.title}</h2>
+          <p>${modal.message}</p>
+        </div>
+        <div class="offline-modal-actions">
+          <button data-action="dismiss-action-feedback">${modal.confirmLabel}</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderFloatingNotice(message: string): string {
+  return `
+    <section class="floating-notice" role="status" aria-live="polite">
+      <span>${message}</span>
+    </section>
+  `;
+}
+
 export function renderApp(
   root: HTMLElement,
   state: GameState,
@@ -969,6 +1031,8 @@ export function renderApp(
   offlineReport: OfflineReport | null,
   showAwakeningConfirm: boolean,
   showHardResetConfirm: boolean,
+  floatingNotice: string | null,
+  actionFeedbackModal: ActionFeedbackModal | null,
 ): void {
   const showDevText = devToolsUnlocked;
   const showFrontierTab = isLifeModuleUnlocked(state);
@@ -1055,6 +1119,8 @@ export function renderApp(
     ${showAwakeningConfirm ? renderAwakeningModal(state) : ""}
     ${showHardResetConfirm ? renderHardResetModal() : ""}
     ${offlineReport ? renderOfflineReport(offlineReport) : ""}
+    ${actionFeedbackModal ? renderActionFeedbackModal(actionFeedbackModal) : ""}
+    ${floatingNotice ? renderFloatingNotice(floatingNotice) : ""}
   `;
 }
 

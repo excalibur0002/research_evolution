@@ -261,10 +261,13 @@ function hydrateState(rawState: unknown): GameState | null {
     : null;
   if (rawProgress) {
     for (const buildingId of buildingIds) {
-      hydrated.buildingConversionProgress[buildingId] = toNonNegativeNumber(
+      const loadedProgress = toNonNegativeNumber(
         rawProgress[buildingId],
         hydrated.buildingConversionProgress[buildingId],
       );
+      // Compatibility fix: older saves may accumulate very large pending cycles when
+      // inputs are missing. Clamp to one pending cycle to avoid starvation loops.
+      hydrated.buildingConversionProgress[buildingId] = Math.min(loadedProgress, 1);
     }
   }
 

@@ -16,7 +16,7 @@ import {
 import { buildingIds, type BuildingId } from "./data/buildings";
 import { manualActionDefinitions } from "./data/game-config";
 import { jobIds, type JobId } from "./data/jobs";
-import type { ResourceId } from "./data/resources";
+import { resourceNameById, type ResourceId } from "./data/resources";
 import { techIds, type TechId } from "./data/techs";
 import {
   exchangeEvidenceForVariant,
@@ -44,7 +44,12 @@ import {
 } from "./game/time";
 import { refreshUnlockMemory } from "./game/formulas";
 import { createInitialState } from "./game/state";
-import { getUiUnlockFingerprint, refreshResourcePanel, renderApp } from "./ui/render";
+import {
+  getUiUnlockFingerprint,
+  refreshResourcePanel,
+  renderApp,
+  type ActionFeedbackModal,
+} from "./ui/render";
 import {
   applyUiTheme,
   getInitialUiTheme,
@@ -68,9 +73,14 @@ let devToolsUnlocked = isDevToolsUnlocked();
 let offlineReport: OfflineReport | null = applyOfflineProgress(state, loadResult.savedAt);
 let showAwakeningConfirm = false;
 let showHardResetConfirm = false;
+let actionFeedbackModal: ActionFeedbackModal | null = null;
+let floatingNotice: string | null = null;
+let floatingNoticeTimer: number | null = null;
 let uiFingerprint = "";
 const AUTO_SAVE_INTERVAL_MS = 5000;
+const UI_REFRESH_INTERVAL_MS = 120;
 let lastAutoSaveAt = performance.now();
+let lastUiRefreshAt = performance.now();
 
 function persistGameState(): void {
   refreshUnlockMemory(state);
@@ -87,6 +97,8 @@ function renderFull(): void {
     offlineReport,
     showAwakeningConfirm,
     showHardResetConfirm,
+    floatingNotice,
+    actionFeedbackModal,
   );
   uiFingerprint = getUiUnlockFingerprint(state);
 }
@@ -163,6 +175,39 @@ function pushLocalLog(message: string): void {
   state.log = state.log.slice(0, 10);
 }
 
+function showFloatingNotice(message: string, durationMs = 1800): void {
+  floatingNotice = message;
+  if (floatingNoticeTimer !== null) {
+    window.clearTimeout(floatingNoticeTimer);
+  }
+  floatingNoticeTimer = window.setTimeout(() => {
+    floatingNotice = null;
+    floatingNoticeTimer = null;
+    renderFull();
+  }, durationMs);
+}
+
+function showActionFeedback(
+  title: string,
+  message: string,
+  confirmLabel = "知道了",
+): void {
+  actionFeedbackModal = { title, message, confirmLabel };
+}
+
+function spawnManualActionFloatingGain(target: HTMLElement, text: string): void {
+  const rect = target.getBoundingClientRect();
+  const marker = document.createElement("span");
+  marker.className = "manual-action-gain";
+  marker.textContent = text;
+  marker.style.left = `${rect.left + rect.width / 2}px`;
+  marker.style.top = `${rect.top - 4}px`;
+  document.body.append(marker);
+  window.setTimeout(() => {
+    marker.remove();
+  }, 700);
+}
+
 if (
   loadResult.migrationFromVersion !== null &&
   loadResult.migrationToVersion !== null
@@ -182,7 +227,7 @@ function getResetBackupFilename(): string {
   return `research-evolution-backup-before-reset-${stamp}.revo`;
 }
 
-function exportSaveToFile(filename = getSaveFilename(), suppressLog = false): void {
+function exportSaveToFile(filename = getSaveFilename(), suppressLog = false): string {
   const content = exportSaveText(state);
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -196,6 +241,7 @@ function exportSaveToFile(filename = getSaveFilename(), suppressLog = false): vo
   if (!suppressLog) {
     pushLocalLog("已导出存档文件。");
   }
+  return filename;
 }
 
 function triggerImportDialog(): void {
@@ -211,6 +257,12 @@ function replaceCurrentState(nextState: typeof state): void {
   offlineReport = null;
   showAwakeningConfirm = false;
   showHardResetConfirm = false;
+  actionFeedbackModal = null;
+  floatingNotice = null;
+  if (floatingNoticeTimer !== null) {
+    window.clearTimeout(floatingNoticeTimer);
+    floatingNoticeTimer = null;
+  }
   previousTime = performance.now();
   lastAutoSaveAt = performance.now();
 }
@@ -220,16 +272,19 @@ async function importSaveFromFile(file: File): Promise<void> {
     const rawText = await file.text();
     const hydrated = importSaveFromText(rawText);
     if (!hydrated) {
-      window.alert("导入失败：文件不是有效的存档格式。");
+      showActionFeedback("导入失败", "文件不是有效的存档格式。", "知道了");
+      renderFull();
       return;
     }
 
     replaceCurrentState(hydrated);
     pushLocalLog(`已导入存档：${file.name}`);
+    showActionFeedback("导入成功", `已导入存档：${file.name}`, "继续");
     persistGameState();
     renderFull();
   } catch {
-    window.alert("导入失败：无法读取存档文件。");
+    showActionFeedback("导入失败", "无法读取存档文件。", "知道了");
+    renderFull();
   }
 }
 
@@ -253,7 +308,13 @@ function handleClick(event: Event): void {
   }
 
   if (action === "gather" && isGatherableResourceId(id)) {
-    gatherResource(state, id);
+    const gained = gatherResource(state, id);
+    if (gained > 0) {
+      spawnManualActionFloatingGain(
+        button,
+        `${resourceNameById[id]} +${formatSummaryNumber(gained)}`,
+      );
+    }
   } else if (action === "acquire-job" && isJobId(id)) {
     acquireJob(state, id);
   } else if (action === "sell-job" && isJobId(id)) {
@@ -299,7 +360,9 @@ function handleClick(event: Event): void {
     if (summary.starChartsGained > 0) {
       chunks.push(`星图 +${formatSummaryNumber(summary.starChartsGained)}`);
     }
-    pushLocalLog(`破题会 x${pulls}：${chunks.join(" / ") || "暂无有效产出"}。`);
+    const resultText = chunks.join(" / ") || "暂无有效产出";
+    pushLocalLog(`破题会 x${pulls}：${resultText}。`);
+    showFloatingNotice(`本次破题：${resultText}`);
   } else if (action === "life-evidence-pity") {
     if (!spendEvidenceForPity(state)) {
       return;
@@ -352,9 +415,14 @@ function handleClick(event: Event): void {
       setDebugTimeScale(state, multiplier);
     }
   } else if (action === "export-save") {
-    exportSaveToFile();
+    const filename = exportSaveToFile();
+    showActionFeedback("导出成功", `存档已导出：${filename}`, "继续");
   } else if (action === "import-save") {
     triggerImportDialog();
+    return;
+  } else if (action === "dismiss-action-feedback") {
+    actionFeedbackModal = null;
+    renderFull();
     return;
   } else if (action === "dismiss-offline-report") {
     offlineReport = null;
@@ -477,12 +545,17 @@ function frame(now: number): void {
   previousTime = now;
   const deltaSeconds = Math.min(realDeltaSeconds * getEffectiveTimeScale(state), 5);
   const hasNonResourceChanges = advanceGame(state, deltaSeconds);
-  refreshUnlockMemory(state);
-  const rebuiltResources = refreshResourcePanel(appRoot, state, devToolsUnlocked);
-  const nextFingerprint = getUiUnlockFingerprint(state);
-  if (rebuiltResources || hasNonResourceChanges || nextFingerprint !== uiFingerprint) {
-    renderFull();
+
+  if (now - lastUiRefreshAt >= UI_REFRESH_INTERVAL_MS) {
+    refreshUnlockMemory(state);
+    const rebuiltResources = refreshResourcePanel(appRoot, state, devToolsUnlocked);
+    const nextFingerprint = getUiUnlockFingerprint(state);
+    if (rebuiltResources || hasNonResourceChanges || nextFingerprint !== uiFingerprint) {
+      renderFull();
+    }
+    lastUiRefreshAt = now;
   }
+
   if (now - lastAutoSaveAt >= AUTO_SAVE_INTERVAL_MS) {
     persistGameState();
     lastAutoSaveAt = now;

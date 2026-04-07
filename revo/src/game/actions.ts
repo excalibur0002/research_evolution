@@ -65,20 +65,20 @@ function refundHalfCost(
   return refundChunks.join(" / ");
 }
 
-export function gatherResource(state: GameState, resourceId: ResourceId): void {
+export function gatherResource(state: GameState, resourceId: ResourceId): number {
   const action = manualActionDefinitions.find(
     (entry) => entry.targetResourceId === resourceId,
   );
   if (!action) {
-    return;
+    return 0;
   }
 
   if (!isManualActionUnlocked(state, action.id)) {
-    return;
+    return 0;
   }
 
   const amount = getManualYield(state, resourceId);
-  addResource(state, resourceId, amount);
+  return addResource(state, resourceId, amount);
 }
 
 export function acquireJob(state: GameState, jobId: JobId): void {

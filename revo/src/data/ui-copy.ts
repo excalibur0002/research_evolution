@@ -88,11 +88,11 @@ export const uiCopy = {
       cycleLocked: "尚未觉醒",
       lineageTooltip: {
         dev: "学脉会在学脉觉醒后永久保留，并提高后续周目的时间倍率。",
-        player: "后面的周目还会认它。",
+        player: "世代继承的珍惜资源。",
       } satisfies ModeCopy,
       lineageNote: {
         dev: "永久成长货币",
-        player: "后面的周目还会认它",
+        player: "世代继承的珍惜资源",
       } satisfies ModeCopy,
       lineageLabel: "学脉",
       starTooltip: {
