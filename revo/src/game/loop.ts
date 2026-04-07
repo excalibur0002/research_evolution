@@ -1,12 +1,14 @@
 import { buildingDefinitions } from "../data/buildings";
 import type { JobId } from "../data/jobs";
-import { resourceDefinitions } from "../data/resources";
+import { resourceDefinitions, type ResourceId } from "../data/resources";
 import {
   addResource,
   canAfford,
   canAffordJobs,
   clampAllResourcesToLimits,
-  getProductionPerSecond,
+  getActiveBuildingCount,
+  getPassiveProductionPerSecond,
+  getProductionMultiplier,
   hasHeadcountForJobs,
   spendCost,
   spendJobCost,
@@ -22,38 +24,41 @@ function processBuildingConversions(state: GameState, deltaSeconds: number): boo
       continue;
     }
 
-    if (!state.buildingEnabled[building.id]) {
-      continue;
-    }
-
-    const ownedCount = state.buildings[building.id];
-    if (ownedCount <= 0) {
+    const activeCount = getActiveBuildingCount(state, building.id);
+    if (activeCount <= 0) {
       state.buildingConversionProgress[building.id] = 0;
       continue;
     }
 
     const cycleSeconds = Math.max(conversion.cycleSeconds, 0.1);
-    const progressGain = (deltaSeconds * ownedCount) / cycleSeconds;
-    state.buildingConversionProgress[building.id] = Math.min(
-      1,
-      state.buildingConversionProgress[building.id] + progressGain,
-    );
+    const progressGain = (deltaSeconds * activeCount) / cycleSeconds;
+    state.buildingConversionProgress[building.id] += progressGain;
 
     while (state.buildingConversionProgress[building.id] >= 1) {
+      const outputJobs = conversion.outputJobs ?? {};
+      const outputResources = conversion.outputResources ?? {};
       if (
         !canAfford(state, conversion.inputResources ?? {}) ||
         !canAffordJobs(state, conversion.inputJobs) ||
-        !hasHeadcountForJobs(state, conversion.outputJobs)
+        !hasHeadcountForJobs(state, outputJobs)
       ) {
         break;
       }
 
       spendCost(state, conversion.inputResources ?? {});
       spendJobCost(state, conversion.inputJobs);
-      for (const [jobId, amount] of Object.entries(conversion.outputJobs)) {
+
+      for (const [jobId, amount] of Object.entries(outputJobs)) {
         state.jobs[jobId as JobId] += amount ?? 0;
         jobsChanged = true;
       }
+
+      for (const [resourceId, amount] of Object.entries(outputResources)) {
+        const multipliedAmount =
+          (amount ?? 0) * getProductionMultiplier(state, resourceId as ResourceId);
+        addResource(state, resourceId as ResourceId, multipliedAmount);
+      }
+
       state.buildingConversionProgress[building.id] -= 1;
     }
   }
@@ -65,7 +70,7 @@ export function advanceGame(state: GameState, deltaSeconds: number): boolean {
   const hasJobChanges = processBuildingConversions(state, deltaSeconds);
 
   for (const resource of resourceDefinitions) {
-    const gain = getProductionPerSecond(state, resource.id) * deltaSeconds;
+    const gain = getPassiveProductionPerSecond(state, resource.id) * deltaSeconds;
     if (gain > 0) {
       addResource(state, resource.id, gain);
     }
